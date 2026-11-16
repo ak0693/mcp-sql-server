@@ -78,6 +78,19 @@ def test_connection_settings_are_locked(warehouse):
         warehouse._con.execute("SET enable_external_access = true")
 
 
+def test_two_warehouses_on_one_file_in_one_process(warehouse_path):
+    # DuckDB shares one database instance per file within a process. Lockdown
+    # settings applied with SET after connecting made the second open fail.
+    first = Warehouse(warehouse_path)
+    second = Warehouse(warehouse_path, max_rows=10_000)
+    assert first.run_query("SELECT count(*) FROM region").rows == [[5]]
+    assert second.run_query("SELECT count(*) FROM nation").rows == [[25]]
+    with pytest.raises(duckdb.Error, match="disabled"):
+        second._con.execute("SELECT * FROM read_csv('/etc/passwd')").fetchall()
+    first.close()
+    second.close()
+
+
 def test_missing_warehouse_gives_build_hint(tmp_path):
     with pytest.raises(FileNotFoundError, match="mcp_sql_server.build"):
         Warehouse(tmp_path / "missing.duckdb")

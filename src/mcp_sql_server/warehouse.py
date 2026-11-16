@@ -28,6 +28,13 @@ from .guard import GuardError, check_query
 DEFAULT_MAX_ROWS = 200
 DEFAULT_TIMEOUT_S = 10.0
 
+LOCKDOWN = {
+    "enable_external_access": False,
+    "autoinstall_known_extensions": False,
+    "autoload_known_extensions": False,
+    "lock_configuration": True,
+}
+
 
 class QueryTimeout(RuntimeError):
     pass
@@ -74,11 +81,10 @@ class Warehouse:
             )
         self.max_rows = max_rows
         self.timeout_s = timeout_s
-        self._con = duckdb.connect(str(self.path), read_only=True)
-        self._con.execute("SET enable_external_access = false")
-        self._con.execute("SET autoinstall_known_extensions = false")
-        self._con.execute("SET autoload_known_extensions = false")
-        self._con.execute("SET lock_configuration = true")
+        # Set at connect time, not with SET afterwards: DuckDB shares one
+        # database instance per file within a process, so a second Warehouse
+        # on the same file must open with the same, already locked, settings.
+        self._con = duckdb.connect(str(self.path), read_only=True, config=LOCKDOWN)
         self._lock = threading.Lock()
         self.tables = frozenset(
             row[0].lower()

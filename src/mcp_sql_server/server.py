@@ -16,9 +16,23 @@ from .guard import GuardError
 from .warehouse import DEFAULT_MAX_ROWS, DEFAULT_TIMEOUT_S, QueryTimeout, Warehouse
 
 # Failures the model can fix by rewriting its query. Their messages are passed
-# back verbatim; anything else is reported by the SDK as a generic error so
-# internals never leak.
+# back with a short tag saying what kind of failure it was; anything else is
+# reported by the SDK as a generic error so internals never leak.
 _EXPECTED_ERRORS = (GuardError, QueryTimeout, duckdb.Error)
+
+REFUSED = "Refused:"
+SQL_ERROR = "SQL error:"
+TIMED_OUT = "Timed out:"
+
+
+def _tool_error(err: Exception) -> ToolError:
+    if isinstance(err, GuardError):
+        tag = REFUSED
+    elif isinstance(err, QueryTimeout):
+        tag = TIMED_OUT
+    else:
+        tag = SQL_ERROR
+    return ToolError(f"{tag} {err}")
 
 INSTRUCTIONS = """\
 Read-only SQL access to a TPC-H sales warehouse in DuckDB.
@@ -46,7 +60,7 @@ def create_server(warehouse: Warehouse) -> MCPServer:
         try:
             return warehouse.describe_table(table)
         except _EXPECTED_ERRORS as err:
-            raise ToolError(str(err)) from err
+            raise _tool_error(err) from err
 
     @server.tool(annotations=READ_ONLY)
     def run_query(sql: str) -> dict[str, Any]:
@@ -58,7 +72,7 @@ def create_server(warehouse: Warehouse) -> MCPServer:
         try:
             return warehouse.run_query(sql).as_dict()
         except _EXPECTED_ERRORS as err:
-            raise ToolError(str(err)) from err
+            raise _tool_error(err) from err
 
     return server
 

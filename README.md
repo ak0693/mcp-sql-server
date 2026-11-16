@@ -36,14 +36,42 @@ run_query(sql)
 2. **Locked-down connection** ([`warehouse.py`](src/mcp_sql_server/warehouse.py)). The database is opened `read_only`, with `enable_external_access` off, extension autoloading off and `lock_configuration` on. The tests bypass the guard on purpose and confirm this layer refuses writes, file reads and attempts to unlock settings on its own.
 3. **Execution limits.** Results are capped (200 rows by default) and the response says whether more existed. A timer interrupts any query past the time limit (10 s by default), and the connection stays usable afterwards.
 
-Errors the model can fix (a refused statement, an unknown column, a timeout) come back as plain-text tool errors so it can correct itself. Unexpected failures are reported generically, so internals do not leak.
+Errors the model can fix come back as plain-text tool errors tagged by kind (`Refused:`, `SQL error:`, `Timed out:`), so the model can correct itself and the evaluation can count each kind. Unexpected failures are reported generically, so internals do not leak.
+
+## Evaluation
+
+Guardrails are only half the job: the tools also have to be usable. The harness in [`evals/`](src/mcp_sql_server/evals) measures that with the 22 TPC-H benchmark queries.
+
+**How it works**
+
+1. Each reference query is restated as a plain-English business question that names the columns to return ([`questions.py`](src/mcp_sql_server/evals/questions.py)). The reference SQL itself comes from DuckDB's tpch extension, not from this repo.
+2. The model gets the server's real tools, fetched over the MCP protocol exactly as a client like Claude Desktop sees them, plus one harness tool, `submit_answer`. It explores and queries as it likes (up to 15 tool calls), then submits one SELECT.
+3. The submitted query runs in full and its result is compared with the reference result. Row order, column order and floating-point noise are ignored; extra or missing rows or columns are not ([`scoring.py`](src/mcp_sql_server/evals/scoring.py)).
+4. The report records accuracy, tool calls per question, guard refusals, SQL errors, timeouts and tokens, plus a JSON Lines file with every tool call for each question.
+
+Grading runs the model's SQL, not its prose, so the score is objective. One question is a deliberate trap: TPC-H query 19 filters on ship mode `'AIR REG'`, which never occurs in the data (the real value is `'REG AIR'`). A model that quietly "fixes" the filter gets a different answer and fails, which tests whether it follows the stated spec.
+
+**Run it**
+
+```bash
+pip install -e ".[dev,eval]"
+python -m mcp_sql_server.evals --model oracle               # free pipeline check, scores 22/22
+export ANTHROPIC_API_KEY=...
+python -m mcp_sql_server.evals --model claude-sonnet-5-5    # the real run
+```
+
+The oracle submits the reference SQL without calling a model. It checks that every reference query passes the guard and scores as correct against itself, and it runs in the test suite on every push. Use `--questions 1 6 14` to try a few questions before a full run.
+
+**Results**
+
+_Pending the first full model run._
 
 ## Quick start
 
 ```bash
 pip install -e ".[dev]"
 python -m mcp_sql_server.build --sf 0.1      # about 600k line items, takes a few seconds
-python -m pytest                              # 50+ tests, a few seconds
+python -m pytest                              # 70+ tests, a few seconds
 ```
 
 ### Use it from Claude Desktop
@@ -73,14 +101,23 @@ src/mcp_sql_server/
   guard.py       static SQL checks
   warehouse.py   locked-down connection, row cap, timeout
   server.py      MCP tools and stdio entry point
-tests/           guard, warehouse and end-to-end MCP client tests
+  evals/
+    questions.py   the 22 questions in plain English
+    reference.py   reference SQL and expected results
+    agent.py       the model loop over the MCP tools
+    models.py      Claude adapter, scripted and oracle models
+    scoring.py     result-set comparison
+    runner.py      CLI and reports
+tests/           guard, warehouse, MCP client and harness tests
+eval_results/    reports from model runs
 ```
 
 ## Roadmap
 
 - [x] Read-only server, three-layer guardrails, test suite, CI
-- [ ] **Evaluation harness.** TPC-H ships 22 reference queries with known answers. Turn them into natural-language questions, let a model answer through the MCP tools, and score result accuracy, tool calls per question and how often the guard refuses.
-- [ ] Results from the evaluation harness in this README
+- [x] Evaluation harness on the 22 TPC-H questions, with an oracle pipeline check in CI
+- [ ] Results from a full model run in this README
+- [ ] Compare models, and with and without the column descriptions, to measure how much the descriptions help
 
 ## Limitations
 

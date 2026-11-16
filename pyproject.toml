@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-sql-server"
-version = "0.1.0"
+version = "0.2.0"
 description = "A read-only MCP server that lets an LLM query a DuckDB warehouse safely."
 readme = "README.md"
 license = "MIT"
@@ -19,10 +19,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "anyio>=4"]
+eval = ["anthropic>=0.40"]
 
 [project.scripts]
 mcp-sql-server = "mcp_sql_server.server:main"
 mcp-sql-build = "mcp_sql_server.build:main"
+mcp-sql-eval = "mcp_sql_server.evals.runner:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcp_sql_server"]
